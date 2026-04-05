@@ -1,9 +1,13 @@
 import { program } from 'commander';
+import { createRequire } from 'module';
 import { BOARDS } from './adapters/base.js';
+
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json');
 
 program
   .name('simboard')
-  .version('0.1.0');
+  .version(version);
 
 program
   .command('boards')
@@ -42,4 +46,7 @@ program
     await doctor();
   });
 
-program.parse();
+program.parseAsync().catch(err => {
+  console.error('Error:', err.message);
+  process.exit(1);
+});
