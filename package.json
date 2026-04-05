@@ -1,0 +1,17 @@
+{
+  "name": "simboard",
+  "version": "0.1.0",
+  "description": "Headless microcontroller simulator CLI for AI and humans",
+  "type": "module",
+  "bin": {
+    "simboard": "./bin/simboard.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "node bin/simboard.js"
+  },
+  "dependencies": {
+    "avr8js": "^0.17.0",
+    "commander": "^12.0.0"
+  }
+}
