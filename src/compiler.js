@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join, basename } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
-import { mkdtemp, rm, readdir, copyFile } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, copyFile, realpath } from 'node:fs/promises';
 
 const execFileAsync = promisify(execFile);
 
@@ -22,8 +22,19 @@ export function parseBuildOutput(output, ext) {
   const lines = output.split('\n');
   for (const line of lines) {
     const trimmed = line.trim();
+    // Match lines that are a standalone file path (no spaces, starts with /)
+    // or extract the last token from lines ending with the extension.
     if (trimmed.endsWith(`.${ext}`)) {
-      return trimmed;
+      // If the line has spaces it's a command; extract the last token (the output file).
+      if (trimmed.includes(' ')) {
+        const tokens = trimmed.split(/\s+/);
+        const candidate = tokens[tokens.length - 1];
+        if (candidate.startsWith('/') && candidate.endsWith(`.${ext}`)) {
+          return candidate;
+        }
+      } else if (trimmed.startsWith('/')) {
+        return trimmed;
+      }
     }
   }
   return null;
@@ -40,7 +51,9 @@ export function parseBuildOutput(output, ext) {
  */
 export async function compileSketch(sketchPath, fqbn, binaryExt) {
   const arduinoCli = resolveArduinoCli();
-  const buildDir = await mkdtemp(join(tmpdir(), 'simboard-build-'));
+  // Use realpath to resolve macOS /tmp → /private/var/... so arduino-cli
+  // can find precompiled core artifacts without path-relative issues.
+  const buildDir = await realpath(await mkdtemp(join(tmpdir(), 'simboard-build-')));
 
   try {
     let combinedOutput = '';
