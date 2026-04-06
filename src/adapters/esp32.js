@@ -23,6 +23,7 @@ export class Esp32Adapter extends BoardAdapter {
   #qemu = null;
   #uart0Socket = null;
   #uart1Socket = null;
+  #uart1Queue = [];
   #serialCallback = null;
   #uart0Port = null;
   #uart1Port = null;
@@ -51,7 +52,11 @@ export class Esp32Adapter extends BoardAdapter {
 
     // Connect to UART0 for serial output after QEMU starts
     setTimeout(() => this.#connectUart0(), 500);
-    setTimeout(() => this.#connectUart1(), 500);
+    // Delay UART1 connect until firmware has booted and stabilized.
+    // QEMU fires a UART1 interrupt when TCP client first connects; if it
+    // arrives before Serial1.begin() finishes the first run crashes with WDT.
+    // 5 s gives the firmware time to complete its first boot cycle.
+    setTimeout(() => this.#connectUart1(), 5000);
   }
 
   #connectUart0(attempt = 0) {
@@ -80,9 +85,22 @@ export class Esp32Adapter extends BoardAdapter {
     });
   }
 
-  #connectUart1() {
-    this.#uart1Socket = createConnection(this.#uart1Port, '127.0.0.1');
-    this.#uart1Socket.on('error', () => {});
+  #connectUart1(attempt = 0) {
+    const sock = createConnection(this.#uart1Port, '127.0.0.1');
+    this.#uart1Socket = sock;
+    sock.on('connect', () => {
+      // Flush any commands queued before the socket was ready
+      for (const msg of this.#uart1Queue) sock.write(msg);
+      this.#uart1Queue = [];
+    });
+    sock.on('error', (err) => {
+      if (err.code === 'ECONNREFUSED' && attempt < 10) {
+        this.#uart1Socket = null;
+        setTimeout(() => this.#connectUart1(attempt + 1), 500);
+      } else if (process.env.DEBUG) {
+        process.stderr.write(`[UART1] socket error: ${err.message}\n`);
+      }
+    });
   }
 
   onSerial(callback) {
@@ -90,10 +108,14 @@ export class Esp32Adapter extends BoardAdapter {
   }
 
   setPin(pin, mode, value) {
-    if (!this.#uart1Socket) return;
-    // Protocol: "SET <pin> <value>\n"
     const val = mode === 'adc' ? value : (mode === 'high' ? 1 : 0);
-    this.#uart1Socket.write(`SET ${pin} ${val}\n`);
+    const msg = `SET ${pin} ${val}\n`;
+    if (!this.#uart1Socket) {
+      // Socket not yet connected — queue for when it connects
+      this.#uart1Queue.push(msg);
+      return;
+    }
+    this.#uart1Socket.write(msg);
   }
 
   stop() {
