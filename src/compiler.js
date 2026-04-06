@@ -1,15 +1,14 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { join, basename } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { mkdtemp, rm, readdir, copyFile } from 'node:fs/promises';
 
 const execFileAsync = promisify(execFile);
 
 /**
- * Returns the path to the arduino-cli binary.
- * Prefers ~/.simboard/bin/arduino-cli, falls back to system PATH.
+ * Returns the path to the arduino-cli binary managed by simboard.
+ * Installed to ~/.simboard/bin/ by the installer.
  */
 export function resolveArduinoCli() {
   return join(homedir(), '.simboard', 'bin', 'arduino-cli');
@@ -34,7 +33,7 @@ export function parseBuildOutput(output, ext) {
  * Compiles a sketch for the given FQBN.
  * Returns the path to the compiled binary.
  *
- * @param {string} sketchPath - absolute path to the .ino file
+ * @param {string} sketchPath - path to the sketch directory or .ino file
  * @param {string} fqbn - e.g. "arduino:avr:uno"
  * @param {string} binaryExt - "hex" or "bin"
  * @returns {Promise<string>} path to compiled binary
@@ -44,29 +43,44 @@ export async function compileSketch(sketchPath, fqbn, binaryExt) {
   const buildDir = await mkdtemp(join(tmpdir(), 'simboard-build-'));
 
   try {
-    const { stdout, stderr } = await execFileAsync(arduinoCli, [
-      'compile',
-      '--fqbn', fqbn,
-      '--build-path', buildDir,
-      '--verbose',
-      sketchPath,
-    ]);
-
-    const combined = stdout + stderr;
-    const binaryPath = parseBuildOutput(combined, binaryExt);
-
-    if (!binaryPath) {
-      // Try to find the binary in the build directory directly
-      const { readdir } = await import('node:fs/promises');
-      const files = await readdir(buildDir);
-      const binary = files.find(f => f.endsWith(`.${binaryExt}`));
-      if (binary) return join(buildDir, binary);
-      throw new Error(`Compilation succeeded but binary not found.\n${combined}`);
+    let combinedOutput = '';
+    try {
+      const { stdout, stderr } = await execFileAsync(arduinoCli, [
+        'compile',
+        '--fqbn', fqbn,
+        '--build-path', buildDir,
+        '--verbose',
+        sketchPath,
+      ]);
+      combinedOutput = stdout + stderr;
+    } catch (err) {
+      // execFile throws on non-zero exit — include stdout/stderr in the error
+      combinedOutput = (err.stdout || '') + (err.stderr || '');
+      throw Object.assign(new Error(`Compilation failed: ${err.message}`), {
+        stdout: err.stdout,
+        stderr: err.stderr,
+        code: err.code,
+      });
     }
 
-    return binaryPath;
-  } catch (err) {
+    // Find the binary in the build dir
+    let binaryInBuildDir = parseBuildOutput(combinedOutput, binaryExt);
+    if (!binaryInBuildDir) {
+      const files = await readdir(buildDir);
+      const match = files.find(f => f.endsWith(`.${binaryExt}`));
+      if (match) binaryInBuildDir = join(buildDir, match);
+    }
+
+    if (!binaryInBuildDir) {
+      throw new Error(`Compilation succeeded but binary not found.\n${combinedOutput}`);
+    }
+
+    // Copy binary out of temp build dir so we can clean up the build dir
+    const outFile = join(tmpdir(), `simboard-${basename(binaryInBuildDir)}`);
+    await copyFile(binaryInBuildDir, outFile);
+    return outFile;
+  } finally {
+    // Always clean up the build dir
     await rm(buildDir, { recursive: true, force: true });
-    throw new Error(`Compilation failed: ${err.message}`);
   }
 }
