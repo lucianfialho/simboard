@@ -37,7 +37,9 @@ export async function run(sketchPath, boardFlag) {
 
   await ensureToolchain(board.adapter);
 
-  const binaryPath = await compileSketch(resolve(sketchPath), board.fqbn, board.binaryExt);
+  // For ESP32 simulation, define SIMBOARD so firmware can disable WiFi/HTTP
+  const simFlags = board.adapter === 'esp32' ? ['build.extra_flags=-DSIMBOARD'] : [];
+  const binaryPath = await compileSketch(resolve(sketchPath), board.fqbn, board.binaryExt, simFlags);
 
   const adapter = await loadAdapter(board.adapter);
   try {

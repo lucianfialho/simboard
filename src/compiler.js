@@ -84,7 +84,14 @@ async function mergeEsp32Flash(buildDir, appBinPath) {
  * @param {string} binaryExt - "hex", "ino.bin", etc.
  * @returns {Promise<string>} path to compiled binary
  */
-export async function compileSketch(sketchPath, fqbn, binaryExt) {
+/**
+ * Compiles a sketch for the given FQBN.
+ * @param {string} sketchPath
+ * @param {string} fqbn
+ * @param {string} binaryExt
+ * @param {string[]} [extraFlags] - extra --build-property flags, e.g. ['build.extra_flags=-DSIMBOARD']
+ */
+export async function compileSketch(sketchPath, fqbn, binaryExt, extraFlags = []) {
   const arduinoCli = resolveArduinoCli();
   // Use realpath to resolve macOS /tmp → /private/var/... so arduino-cli
   // can find precompiled core artifacts without path-relative issues.
@@ -93,11 +100,13 @@ export async function compileSketch(sketchPath, fqbn, binaryExt) {
   try {
     let combinedOutput = '';
     try {
+      const buildProps = extraFlags.flatMap(f => ['--build-property', f]);
       const { stdout, stderr } = await execFileAsync(arduinoCli, [
         'compile',
         '--fqbn', fqbn,
         '--build-path', buildDir,
         '--verbose',
+        ...buildProps,
         sketchPath,
       ], { maxBuffer: 64 * 1024 * 1024 }); // 64MB — ESP32 compilation output is large
       combinedOutput = stdout + stderr;
