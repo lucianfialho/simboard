@@ -54,9 +54,11 @@ export class AvrAdapter extends BoardAdapter {
       this.#buffer += char;
       if (char === '\n') {
         const line = this.#buffer.trim();
-        if (line && this.#serialCallback) {
-          this.#serialCallback(line);
+        if (line) {
           process.stdout.write(line + '\n');
+          if (this.#serialCallback) {
+            this.#serialCallback(line);
+          }
         }
         this.#buffer = '';
       }
