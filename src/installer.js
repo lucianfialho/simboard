@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { homedir, platform, arch } from 'node:os';
-import { mkdir, chmod, access, writeFile } from 'node:fs/promises';
+import { mkdir, chmod, access, unlink } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { constants } from 'node:fs';
@@ -59,6 +59,7 @@ export async function ensureArduinoCli() {
   const archivePath = join(SIMBOARD_DIR, 'arduino-cli.tar.gz');
   await downloadFile(url, archivePath);
   await extractTarGz(archivePath, BIN_DIR);
+  await unlink(archivePath).catch(() => {}); // cleanup archive
   await chmod(cliPath, 0o755);
 
   process.stderr.write('arduino-cli installed.\n');
@@ -66,6 +67,7 @@ export async function ensureArduinoCli() {
 }
 
 export async function ensureAvrCore() {
+  await ensureArduinoCli();
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const execFileAsync = promisify(execFile);
@@ -85,6 +87,7 @@ export async function ensureAvrCore() {
 }
 
 export async function ensureEsp32Core() {
+  await ensureArduinoCli();
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const execFileAsync = promisify(execFile);
@@ -121,27 +124,40 @@ export async function ensureToolchain(adapter) {
   }
 }
 
+async function extractTarXz(archivePath, destDir) {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  await promisify(execFile)('tar', ['-xJf', archivePath, '-C', destDir]);
+}
+
 export async function ensureQemu() {
-  const qemuPath = join(BIN_DIR, 'qemu-system-xtensa');
+  // Binary is extracted to BIN_DIR/qemu/bin/qemu-system-xtensa
+  const qemuPath = join(BIN_DIR, 'qemu', 'bin', 'qemu-system-xtensa');
   if (await fileExists(qemuPath)) return qemuPath;
 
   process.stderr.write('qemu-system-xtensa not found. Installing (~30MB)...\n');
 
-  // lcgamboa pre-built binaries for ESP32 QEMU
+  // espressif/qemu pre-built binaries for ESP32 (xtensa) QEMU
+  // Release: esp-develop-9.2.2-20250817 — assets confirmed via GitHub API
+  const QEMU_RELEASE = 'esp-develop-9.2.2-20250817';
+  const QEMU_VERSION = 'esp_develop_9.2.2_20250817';
+  const QEMU_BASE = `https://github.com/espressif/qemu/releases/download/${QEMU_RELEASE}`;
   const QEMU_URLS = {
-    'darwin-arm64': 'https://github.com/lcgamboa/qemu_esp32/releases/latest/download/qemu-xtensa-macos-arm64.tar.gz',
-    'darwin-x64':   'https://github.com/lcgamboa/qemu_esp32/releases/latest/download/qemu-xtensa-macos-x86_64.tar.gz',
-    'linux-x64':    'https://github.com/lcgamboa/qemu_esp32/releases/latest/download/qemu-xtensa-linux-x86_64.tar.gz',
-    'linux-arm64':  'https://github.com/lcgamboa/qemu_esp32/releases/latest/download/qemu-xtensa-linux-arm64.tar.gz',
+    'darwin-arm64': `${QEMU_BASE}/qemu-xtensa-softmmu-${QEMU_VERSION}-aarch64-apple-darwin.tar.xz`,
+    'darwin-x64':   `${QEMU_BASE}/qemu-xtensa-softmmu-${QEMU_VERSION}-x86_64-apple-darwin.tar.xz`,
+    'linux-x64':    `${QEMU_BASE}/qemu-xtensa-softmmu-${QEMU_VERSION}-x86_64-linux-gnu.tar.xz`,
+    'linux-arm64':  `${QEMU_BASE}/qemu-xtensa-softmmu-${QEMU_VERSION}-aarch64-linux-gnu.tar.xz`,
   };
 
   const key = platformKey();
   const url = QEMU_URLS[key];
   if (!url) throw new Error(`No pre-built QEMU binary for platform: ${key}`);
 
-  const archivePath = join(SIMBOARD_DIR, 'qemu-xtensa.tar.gz');
+  await mkdir(BIN_DIR, { recursive: true });
+  const archivePath = join(SIMBOARD_DIR, 'qemu-xtensa.tar.xz');
   await downloadFile(url, archivePath);
-  await extractTarGz(archivePath, BIN_DIR);
+  await extractTarXz(archivePath, BIN_DIR);
+  await unlink(archivePath).catch(() => {}); // cleanup archive
   await chmod(qemuPath, 0o755);
 
   process.stderr.write('qemu-system-xtensa installed.\n');
@@ -151,7 +167,7 @@ export async function ensureQemu() {
 export async function doctor() {
   const checks = [
     { name: 'arduino-cli',        path: join(BIN_DIR, 'arduino-cli') },
-    { name: 'qemu-system-xtensa', path: join(BIN_DIR, 'qemu-system-xtensa') },
+    { name: 'qemu-system-xtensa', path: join(BIN_DIR, 'qemu', 'bin', 'qemu-system-xtensa') },
   ];
 
   console.log('simboard toolchain status:');
