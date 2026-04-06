@@ -11,5 +11,5 @@ export const BOARDS = {
   uno:   { fqbn: 'arduino:avr:uno',   adapter: 'avr',   binaryExt: 'hex' },
   nano:  { fqbn: 'arduino:avr:nano',  adapter: 'avr',   binaryExt: 'hex' },
   mega:  { fqbn: 'arduino:avr:mega',  adapter: 'avr',   binaryExt: 'hex' },
-  esp32: { fqbn: 'esp32:esp32:esp32', adapter: 'esp32', binaryExt: 'bin' },
+  esp32: { fqbn: 'esp32:esp32:esp32:FlashMode=dout', adapter: 'esp32', binaryExt: 'ino.bin' },
 };

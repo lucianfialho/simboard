@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join, basename } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
-import { mkdtemp, rm, readdir, copyFile, realpath } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, copyFile, realpath, readFile, writeFile } from 'node:fs/promises';
 
 const execFileAsync = promisify(execFile);
 
@@ -41,12 +41,47 @@ export function parseBuildOutput(output, ext) {
 }
 
 /**
+ * For ESP32: merge bootloader + partitions + app into a 4MB flash image
+ * that QEMU can boot directly with -drive file=...,if=mtd,format=raw
+ */
+async function mergeEsp32Flash(buildDir, appBinPath) {
+  const base = basename(appBinPath, '.bin'); // e.g. "esp32-hello.ino"
+  const bootloaderBin = join(buildDir, `${base}.bootloader.bin`);
+  const partitionsBin = join(buildDir, `${base}.partitions.bin`);
+
+  const FLASH_SIZE = 4 * 1024 * 1024; // 4MB
+
+  // Build a 4MB buffer filled with 0xFF (erased flash state)
+  const flash = Buffer.alloc(FLASH_SIZE, 0xff);
+
+  // Write each region at its fixed offset
+  // Offsets match default ESP32 partition layout:
+  //   0x1000  — bootloader
+  //   0x8000  — partition table
+  //   0x10000 — application
+  const regions = [
+    { path: bootloaderBin, offset: 0x1000 },
+    { path: partitionsBin, offset: 0x8000 },
+    { path: appBinPath,    offset: 0x10000 },
+  ];
+
+  for (const { path, offset } of regions) {
+    const data = await readFile(path);
+    data.copy(flash, offset);
+  }
+
+  const outPath = join(tmpdir(), `simboard-${base}.flash4mb.bin`);
+  await writeFile(outPath, flash);
+  return outPath;
+}
+
+/**
  * Compiles a sketch for the given FQBN.
  * Returns the path to the compiled binary.
  *
  * @param {string} sketchPath - path to the sketch directory or .ino file
  * @param {string} fqbn - e.g. "arduino:avr:uno"
- * @param {string} binaryExt - "hex" or "bin"
+ * @param {string} binaryExt - "hex", "ino.bin", etc.
  * @returns {Promise<string>} path to compiled binary
  */
 export async function compileSketch(sketchPath, fqbn, binaryExt) {
@@ -64,7 +99,7 @@ export async function compileSketch(sketchPath, fqbn, binaryExt) {
         '--build-path', buildDir,
         '--verbose',
         sketchPath,
-      ]);
+      ], { maxBuffer: 64 * 1024 * 1024 }); // 64MB — ESP32 compilation output is large
       combinedOutput = stdout + stderr;
     } catch (err) {
       // execFile throws on non-zero exit — include stdout/stderr in the error
@@ -88,7 +123,13 @@ export async function compileSketch(sketchPath, fqbn, binaryExt) {
       throw new Error(`Compilation succeeded but binary not found.\n${combinedOutput}`);
     }
 
-    // Copy binary out of temp build dir so we can clean up the build dir
+    // For ESP32 (ino.bin), merge bootloader + partitions + app into a 4MB
+    // flash image that QEMU can load directly via -drive if=mtd
+    if (binaryExt === 'ino.bin') {
+      return await mergeEsp32Flash(buildDir, binaryInBuildDir);
+    }
+
+    // For all other boards, copy binary out of temp build dir
     const outFile = join(tmpdir(), `simboard-${basename(binaryInBuildDir)}`);
     await copyFile(binaryInBuildDir, outFile);
     return outFile;
