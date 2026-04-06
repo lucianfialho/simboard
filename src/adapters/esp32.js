@@ -50,25 +50,34 @@ export class Esp32Adapter extends BoardAdapter {
     });
 
     // Connect to UART0 for serial output after QEMU starts
-    setTimeout(() => this.#connectUart0(), 1000);
-    setTimeout(() => this.#connectUart1(), 1000);
+    setTimeout(() => this.#connectUart0(), 500);
+    setTimeout(() => this.#connectUart1(), 500);
   }
 
-  #connectUart0() {
+  #connectUart0(attempt = 0) {
     this.#uart0Socket = createConnection(this.#uart0Port, '127.0.0.1');
-    this.#uart0Socket.on('data', (data) => {
-      const text = data.toString('utf-8');
-      this.#buffer += text;
-      const lines = this.#buffer.split('\n');
-      this.#buffer = lines.pop(); // keep incomplete line
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        process.stdout.write(trimmed + '\n');
-        if (this.#serialCallback) this.#serialCallback(trimmed);
+    this.#uart0Socket.on('connect', () => {
+      // connected — set up data handler
+      this.#uart0Socket.on('data', (data) => {
+        const text = data.toString('utf-8');
+        this.#buffer += text;
+        const lines = this.#buffer.split('\n');
+        this.#buffer = lines.pop();
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          process.stdout.write(trimmed + '\n');
+          if (this.#serialCallback) this.#serialCallback(trimmed);
+        }
+      });
+    });
+    this.#uart0Socket.on('error', (err) => {
+      if (err.code === 'ECONNREFUSED' && attempt < 10) {
+        setTimeout(() => this.#connectUart0(attempt + 1), 500);
+      } else if (process.env.DEBUG) {
+        process.stderr.write(`[UART0] socket error: ${err.message}\n`);
       }
     });
-    this.#uart0Socket.on('error', () => {}); // QEMU may not be ready yet
   }
 
   #connectUart1() {
@@ -88,8 +97,8 @@ export class Esp32Adapter extends BoardAdapter {
   }
 
   stop() {
-    if (this.#uart0Socket) this.#uart0Socket.destroy();
-    if (this.#uart1Socket) this.#uart1Socket.destroy();
-    if (this.#qemu) this.#qemu.kill('SIGTERM');
+    if (this.#uart0Socket) { this.#uart0Socket.destroy(); this.#uart0Socket = null; }
+    if (this.#uart1Socket) { this.#uart1Socket.destroy(); this.#uart1Socket = null; }
+    if (this.#qemu) { this.#qemu.kill('SIGTERM'); this.#qemu = null; }
   }
 }
