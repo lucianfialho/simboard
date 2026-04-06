@@ -42,4 +42,17 @@ describe('parseCommand', () => {
     assert.equal(parseCommand('pin 34 adc 5000'), null);
     assert.equal(parseCommand('pin 34 adc -1'), null);
   });
+
+  test('ADC boundary values are valid', () => {
+    assert.deepEqual(parseCommand('pin 34 adc 0'), { type: 'pin', pin: 34, mode: 'adc', value: 0 });
+    assert.deepEqual(parseCommand('pin 34 adc 4095'), { type: 'pin', pin: 34, mode: 'adc', value: 4095 });
+  });
+
+  test('returns null for adc with missing value', () => {
+    assert.equal(parseCommand('pin 34 adc'), null);
+  });
+
+  test('returns null for negative pin number', () => {
+    assert.equal(parseCommand('pin -5 high'), null);
+  });
 });

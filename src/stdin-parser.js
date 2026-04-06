@@ -23,6 +23,7 @@ export function parseCommand(line) {
     const mode = parts[2].toLowerCase();
 
     if (isNaN(pin)) return null;
+    if (pin < 0) return null;
 
     if (mode === 'high' || mode === 'low') {
       return { type: 'pin', pin, mode, value: null };
