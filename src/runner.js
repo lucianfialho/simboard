@@ -32,22 +32,19 @@ export async function run(sketchPath, boardFlag) {
   const board = BOARDS[boardFlag];
   if (!board) {
     const valid = Object.keys(BOARDS).join(', ');
-    console.error(`Unknown board "${boardFlag}". Valid boards: ${valid}`);
-    process.exit(1);
+    throw new Error(`Unknown board "${boardFlag}". Valid boards: ${valid}`);
   }
 
   await ensureToolchain(board.adapter);
 
-  let binaryPath;
-  try {
-    binaryPath = await compileSketch(resolve(sketchPath), board.fqbn, board.binaryExt);
-  } catch (err) {
-    console.error(err.message);
-    process.exit(1);
-  }
+  const binaryPath = await compileSketch(resolve(sketchPath), board.fqbn, board.binaryExt);
 
   const adapter = await loadAdapter(board.adapter);
-  await adapter.load(binaryPath);
+  try {
+    await adapter.load(binaryPath);
+  } catch (err) {
+    throw new Error(`Failed to load binary: ${err.message}`);
+  }
   adapter.start();
 
   // Bridge stdin → adapter.setPin()
@@ -57,6 +54,7 @@ export async function run(sketchPath, boardFlag) {
     if (!cmd) return;
     if (cmd.type === 'exit') {
       adapter.stop();
+      rl.close();
       process.exit(0);
     }
     if (cmd.type === 'pin') {
@@ -67,6 +65,7 @@ export async function run(sketchPath, boardFlag) {
   // Clean exit on SIGINT (Ctrl+C)
   process.on('SIGINT', () => {
     adapter.stop();
+    rl.close();
     process.exit(0);
   });
 }
